@@ -17,7 +17,9 @@
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @way2meal/api prisma:migrate",
     "db:seed": "pnpm --filter @way2meal/api prisma:seed",
-    "dev:api": "pnpm --filter @way2meal/api dev"
+    "dev:api": "pnpm --filter @way2meal/api dev",
+    "dev:admin": "pnpm --filter @way2meal/admin dev",
+    "dev:mobile": "pnpm --filter @way2meal/mobile start"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

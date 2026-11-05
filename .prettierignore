@@ -4,3 +4,6 @@ pnpm-lock.yaml
 apps/api/prisma/migrations
 docs
 CLAUDE.md
+.next
+.expo
+apps/**/AGENTS.md

@@ -10,7 +10,13 @@ import { AuthTokens } from '@way2meal/shared';
 import { Clock } from '../../common/clock/clock';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AppConfig } from '../../config/env';
-import { generateOtpCode, hashOtp, otpMatches } from './otp/otp-code';
+import {
+  STATIC_CODE_PATTERN,
+  generateOtpCode,
+  hashOtp,
+  otpMatches,
+  staticCodeMatches,
+} from './otp/otp-code';
 import { OTP_PROVIDER, OtpProvider } from './otp/otp-provider';
 import { TokenService } from './token.service';
 
@@ -85,7 +91,10 @@ export class AuthService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-    if (!otpMatches(env.OTP_HMAC_SECRET, phone, code, otp.codeHash)) {
+    const matches =
+      otpMatches(env.OTP_HMAC_SECRET, phone, code, otp.codeHash) ||
+      (await this.isAdminStaticCode(phone, code));
+    if (!matches) {
       const updated = await this.prisma.otpRequest.update({
         where: { id: otp.id },
         data: { attempts: { increment: 1 } },
@@ -125,6 +134,25 @@ export class AuthService {
 
   logout(refreshToken: string): Promise<void> {
     return this.tokens.revoke(refreshToken);
+  }
+
+  /**
+   * Phase 1 admin bootstrap: the admin can't read their own code from the
+   * admin panel before signing in, so ADMIN accounts may use a long static
+   * code (hash in ADMIN_STATIC_OTP_HASH). Only with the mock provider — it
+   * stops working once a real SMS provider is configured.
+   */
+  private async isAdminStaticCode(phone: string, code: string): Promise<boolean> {
+    const { ADMIN_STATIC_OTP_HASH, OTP_PROVIDER } = this.config.env;
+    if (!ADMIN_STATIC_OTP_HASH || OTP_PROVIDER !== 'mock' || !STATIC_CODE_PATTERN.test(code)) {
+      return false;
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { phone },
+      select: { role: true, deletedAt: true },
+    });
+    if (!user || user.role !== Role.ADMIN || user.deletedAt) return false;
+    return staticCodeMatches(code, ADMIN_STATIC_OTP_HASH);
   }
 
   /** DEV_OTP (non-production only; env validation enforces this) makes local testing painless. */

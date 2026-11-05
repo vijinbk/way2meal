@@ -16,6 +16,8 @@ describe('schemas', () => {
   it('validates OTP codes and dates', () => {
     expect(otpCodeSchema.safeParse('123456').success).toBe(true);
     expect(otpCodeSchema.safeParse('12345').success).toBe(false);
+    expect(otpCodeSchema.safeParse('1234567890').success).toBe(true);
+    expect(otpCodeSchema.safeParse('1234567890123').success).toBe(false);
     expect(isoDateSchema.safeParse('2026-02-30').success).toBe(false);
   });
 

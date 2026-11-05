@@ -6,7 +6,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
-    "lint": "eslint src test prisma",
+    "lint": "eslint src test prisma scripts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --config jest.config.js && jest --config jest.integration.config.js",
     "test:unit": "jest --config jest.config.js",
@@ -15,7 +15,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "admin:login-code": "ts-node --transpile-only scripts/admin-login-code.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
