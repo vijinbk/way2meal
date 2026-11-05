@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { STATIC_HASH_PATTERN } from '../modules/auth/otp/otp-code';
 
 const bool = z
   .enum(['true', 'false'])
@@ -24,6 +25,16 @@ const envSchema = z
     DEV_OTP: z
       .string()
       .regex(/^\d{6}$/)
+      .optional(),
+
+    /**
+     * Phase 1 only (mock OTP): scrypt hash of an 8–12 digit code that ADMIN
+     * accounts can enter instead of the sent code. Generate with
+     * `pnpm --filter @way2meal/api admin:login-code`.
+     */
+    ADMIN_STATIC_OTP_HASH: z
+      .string()
+      .regex(STATIC_HASH_PATTERN, 'Expected the output of the admin:login-code script')
       .optional(),
 
     OTP_PROVIDER: z.enum(['mock']).default('mock'),

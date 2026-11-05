@@ -21,7 +21,7 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
-      eqeqeq: ['error', 'always'],
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },

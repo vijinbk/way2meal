@@ -21,4 +21,7 @@ export const phoneSchema = z
   .pipe(z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'))
   .transform((digits) => `+91${digits}`);
 
-export const otpCodeSchema = z.string().regex(/^\d{6}$/, 'OTP must be 6 digits');
+/** Sent codes are 6 digits; staff may use a longer admin login code (8–12 digits). */
+export const otpCodeSchema = z
+  .string()
+  .regex(/^\d{6,12}$/, 'Enter the code you received (6 digits)');

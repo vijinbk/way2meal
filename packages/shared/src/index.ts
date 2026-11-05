@@ -6,3 +6,6 @@ export * from './schemas/settings';
 export * from './time/cutoff';
 export * from './time/ist';
 export * from './time/service-calendar';
+export * from './schemas/catalogue';
+export * from './schemas/menu';
+export * from './time/duration';

@@ -1,5 +1,6 @@
 import { Role } from '@prisma/client';
 import request from 'supertest';
+import { hashStaticCode } from '../src/modules/auth/otp/otp-code';
 import { type TestApp, createTestApp, resetDb } from './setup/test-app';
 
 const PHONE = '+919876543210';
@@ -188,5 +189,58 @@ describe('Auth with DEV_OTP (non-production)', () => {
       .post('/v1/auth/otp/verify')
       .send({ phone: PHONE, code: '123456' })
       .expect(200);
+  });
+});
+
+describe('Admin login code (Phase 1 bootstrap)', () => {
+  const ADMIN = '+919999999999';
+  const CUSTOMER = '+919811112222';
+  const CODE = '4815162342';
+  let t: TestApp;
+  const http = () => request(t.app.getHttpServer());
+  const requestOtp = (phone: string) => http().post('/v1/auth/otp/request').send({ phone });
+  const verify = (phone: string, code: string) =>
+    http().post('/v1/auth/otp/verify').send({ phone, code });
+
+  beforeAll(async () => {
+    t = await createTestApp({ env: { ADMIN_STATIC_OTP_HASH: hashStaticCode(CODE) } });
+  });
+  afterAll(() => t.close());
+  beforeEach(async () => {
+    await resetDb(t.prisma);
+    t.clock.set('2026-11-09T08:00:00+05:30');
+    await t.prisma.user.create({ data: { phone: ADMIN, role: Role.ADMIN, name: 'Owner' } });
+    await t.prisma.user.create({ data: { phone: CUSTOMER, role: Role.CUSTOMER, name: 'Asha' } });
+  });
+
+  it('lets an ADMIN sign in with the static code after requesting an OTP', async () => {
+    await requestOtp(ADMIN).expect(202);
+    const res = await verify(ADMIN, CODE).expect(200);
+    expect(res.body.user.role).toBe('ADMIN');
+    // The request is consumed like a normal OTP.
+    await verify(ADMIN, CODE).expect(401);
+  });
+
+  it('still requires a live OTP request (rate limit and expiry apply)', async () => {
+    await verify(ADMIN, CODE).expect(401);
+    await requestOtp(ADMIN).expect(202);
+    t.clock.advance(5 * 60_000);
+    await verify(ADMIN, CODE).expect(401);
+  });
+
+  it('does not work for customers', async () => {
+    await requestOtp(CUSTOMER).expect(202);
+    await verify(CUSTOMER, CODE).expect(401);
+  });
+
+  it('wrong static codes count as failed attempts', async () => {
+    await requestOtp(ADMIN).expect(202);
+    for (let i = 0; i < 5; i++) await verify(ADMIN, '1111111111').expect(401);
+    await verify(ADMIN, CODE).expect(429);
+  });
+
+  it('the sent 6-digit code still works for the admin', async () => {
+    await requestOtp(ADMIN).expect(202);
+    await verify(ADMIN, t.outbox.latest()[0]!.code).expect(200);
   });
 });

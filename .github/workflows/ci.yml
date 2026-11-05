@@ -34,6 +34,13 @@ jobs:
       - name: Type-check
         run: pnpm typecheck
 
+      # Catches Next.js prerender errors and Metro resolution problems that type-checking can't.
+      - name: Build (API, shared, admin)
+        run: pnpm build
+
+      - name: Bundle mobile app (Android JS)
+        run: pnpm --filter @way2meal/mobile bundle:android
+
       # Unit + integration (integration uses Testcontainers; Docker is available on ubuntu-latest).
       - name: Test
         run: pnpm test
