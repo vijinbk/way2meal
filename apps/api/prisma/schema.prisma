@@ -1,0 +1,508 @@
+// Way2meal Phase 1 data model. See docs/REQUIREMENTS.md → "Data model".
+//
+// Conventions
+// - Money: integer paise (`*Paise Int`), INR only.
+// - Instants: `DateTime` (timestamptz, UTC).
+// - Service days: `@db.Date` holding the IST calendar date (no time component).
+// - Constraints Prisma can't express (CHECKs, partial unique indexes) live in
+//   the SQL migrations; see migrations/*_invariants.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  KITCHEN
+  DELIVERY
+}
+
+enum Slot {
+  LUNCH
+  DINNER
+}
+
+enum PlanKind {
+  TRIAL
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum SubStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  SCHEDULED
+  SKIPPED
+  PREPARING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  MISSED
+  CANCELLED
+}
+
+enum AddOnLineStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum OrderKind {
+  TRIAL
+  DAILY
+  ADDON
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentMethod {
+  UPI_MANUAL
+  CASH
+  RAZORPAY
+}
+
+enum PaymentStatus {
+  PENDING
+  SUBMITTED
+  PAID
+  REJECTED
+  REFUNDED
+}
+
+// ───────────────────────────── Users & auth ─────────────────────────────
+
+model User {
+  id               String    @id @default(cuid())
+  /// E.164, e.g. +919876543210
+  phone            String    @unique
+  name             String?
+  email            String?
+  role             Role      @default(CUSTOMER)
+  dietaryNote      String?
+  defaultFlavourId String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  defaultFlavour     Flavour?       @relation(fields: [defaultFlavourId], references: [id])
+  addresses          Address[]
+  refreshTokens      RefreshToken[]
+  subscriptions      Subscription[]
+  deliveries         Delivery[]     @relation("DeliveryCustomer")
+  assignedDeliveries Delivery[]     @relation("DeliveryAssignee")
+  orders             Order[]
+  payments           Payment[]      @relation("PaymentPayer")
+  verifiedPayments   Payment[]      @relation("PaymentVerifier")
+  refundsRecorded    Refund[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  userId    String
+  /// Home / Office / custom
+  label     String
+  line1     String
+  line2     String?
+  landmark  String?
+  area      String
+  pincode   String
+  lat       Float?
+  lng       Float?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+  deliveries    Delivery[]
+
+  @@index([userId])
+}
+
+/// One row per OTP sent. Only an HMAC of the code is stored.
+model OtpRequest {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+}
+
+/// Opaque refresh tokens (stored as SHA-256), rotated on every use.
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ───────────────────────────── Menu ─────────────────────────────
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  imageUrl    String?
+  proteinG    Int?
+  kcalMin     Int?
+  kcalMax     Int?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  templateItems MenuTemplateItem[]
+  overrideItems MenuOverrideItem[]
+}
+
+/// The fixed meal for a weekday + slot. Nutrition tags describe the whole meal.
+model MenuTemplate {
+  id          String   @id @default(cuid())
+  /// ISO weekday: Monday = 1 … Sunday = 7
+  weekday     Int
+  slot        Slot
+  description String?
+  imageUrl    String?
+  proteinG    Int?
+  kcalMin     Int?
+  kcalMax     Int?
+  tagline     String?
+  updatedAt   DateTime @updatedAt
+
+  items MenuTemplateItem[]
+
+  @@unique([weekday, slot])
+}
+
+model MenuTemplateItem {
+  id         String @id @default(cuid())
+  templateId String
+  menuItemId String
+  sortOrder  Int    @default(0)
+
+  template MenuTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  menuItem MenuItem     @relation(fields: [menuItemId], references: [id])
+
+  @@unique([templateId, menuItemId])
+}
+
+/// Replaces the weekday template for one date + slot (e.g. a festival special).
+model MenuOverride {
+  id          String   @id @default(cuid())
+  date        DateTime @db.Date
+  slot        Slot
+  note        String?
+  description String?
+  imageUrl    String?
+  proteinG    Int?
+  kcalMin     Int?
+  kcalMax     Int?
+  tagline     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items MenuOverrideItem[]
+
+  @@unique([date, slot])
+}
+
+model MenuOverrideItem {
+  id         String @id @default(cuid())
+  overrideId String
+  menuItemId String
+  sortOrder  Int    @default(0)
+
+  override MenuOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+  menuItem MenuItem     @relation(fields: [menuItemId], references: [id])
+
+  @@unique([overrideId, menuItemId])
+}
+
+/// Dinner chicken flavours.
+model Flavour {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  imageUrl  String?
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  users         User[]
+  subscriptions Subscription[]
+  deliveries    Delivery[]
+}
+
+// ───────────────────────────── Catalogue ─────────────────────────────
+
+model AddOn {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  imageUrl    String?
+  pricePaise  Int
+  slots       Slot[]
+  /// null = unlimited
+  dailyStock  Int?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines DeliveryAddOn[]
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  name         String
+  kind         PlanKind
+  slot         Slot
+  mealCount    Int
+  pricePaise   Int
+  /// Max customer skips per subscription (0 = skipping not allowed)
+  maxSkips     Int
+  /// Carry-forward validity: all meals must be delivered within this many days of the start date
+  validityDays Int
+  /// Trial-once: a phone number may buy this plan only once
+  oncePerUser  Boolean  @default(false)
+  active       Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+  orders        Order[]
+
+  @@unique([kind, slot, name])
+}
+
+// ───────────────────────────── Subscriptions & deliveries ─────────────────────────────
+
+model Subscription {
+  id           String    @id @default(cuid())
+  userId       String
+  planId       String
+  slot         Slot
+  status       SubStatus @default(PENDING_PAYMENT)
+  /// IST date of the first scheduled meal (chosen at purchase)
+  startDate    DateTime  @db.Date
+  /// IST date of the last scheduled delivery; null until scheduled
+  endDate      DateTime? @db.Date
+  /// Snapshotted from Plan at purchase so later admin edits don't change it
+  mealsTotal   Int
+  maxSkips     Int
+  validityDays Int
+  pricePaise   Int
+  skipsUsed    Int       @default(0)
+  /// Admin-granted carry-forward credits (e.g. kitchen missed a delivery)
+  extraCredits Int       @default(0)
+  addressId    String
+  flavourId    String?
+  activatedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id])
+  plan       Plan       @relation(fields: [planId], references: [id])
+  address    Address    @relation(fields: [addressId], references: [id])
+  flavour    Flavour?   @relation(fields: [flavourId], references: [id])
+  deliveries Delivery[]
+  payments   Payment[]
+
+  @@index([userId, status])
+}
+
+/// One row per meal per date — subscriptions and one-off bookings alike.
+model Delivery {
+  id             String         @id @default(cuid())
+  userId         String
+  slot           Slot
+  date           DateTime       @db.Date
+  status         DeliveryStatus @default(SCHEDULED)
+  /// Exactly one of subscriptionId / orderId is set (CHECK constraint)
+  subscriptionId String?
+  orderId        String?
+  addressId      String
+  flavourId      String?
+  note           String?
+  isCarryForward Boolean        @default(false)
+  /// Links an appended carry-forward row to the delivery it replaced
+  carriedFromId  String?        @unique
+  assignedToId   String?
+  deliveredAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user         User          @relation("DeliveryCustomer", fields: [userId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  order        Order?        @relation(fields: [orderId], references: [id])
+  address      Address       @relation(fields: [addressId], references: [id])
+  flavour      Flavour?      @relation(fields: [flavourId], references: [id])
+  assignedTo   User?         @relation("DeliveryAssignee", fields: [assignedToId], references: [id])
+  carriedFrom  Delivery?     @relation("CarryForward", fields: [carriedFromId], references: [id])
+  carriedTo    Delivery?     @relation("CarryForward")
+  addOns       DeliveryAddOn[]
+
+  @@index([date, slot, status])
+  @@index([subscriptionId, date])
+  @@index([userId, date])
+}
+
+model DeliveryAddOn {
+  id         String          @id @default(cuid())
+  deliveryId String
+  addOnId    String
+  qty        Int
+  /// Unit price snapshotted at attach time
+  pricePaise Int
+  paymentId  String?
+  status     AddOnLineStatus @default(ACTIVE)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  addOn    AddOn    @relation(fields: [addOnId], references: [id])
+  payment  Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([deliveryId])
+}
+
+// ───────────────────────────── Orders & payments ─────────────────────────────
+
+/// One-off bookings (trial/daily) and add-on purchases.
+model Order {
+  id         String      @id @default(cuid())
+  userId     String
+  kind       OrderKind
+  planId     String?
+  totalPaise Int
+  status     OrderStatus @default(PENDING_PAYMENT)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id])
+  plan       Plan?      @relation(fields: [planId], references: [id])
+  deliveries Delivery[]
+  payments   Payment[]
+
+  @@index([userId, createdAt])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  userId         String
+  /// Exactly one of subscriptionId / orderId is set (CHECK constraint)
+  subscriptionId String?
+  orderId        String?
+  amountPaise    Int
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  utr            String?
+  screenshotUrl  String?
+  providerRef    String?
+  verifiedById   String?
+  verifiedAt     DateTime?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user         User            @relation("PaymentPayer", fields: [userId], references: [id])
+  subscription Subscription?   @relation(fields: [subscriptionId], references: [id])
+  order        Order?          @relation(fields: [orderId], references: [id])
+  verifiedBy   User?           @relation("PaymentVerifier", fields: [verifiedById], references: [id])
+  refunds      Refund[]
+  addOnLines   DeliveryAddOn[]
+
+  @@index([status, createdAt])
+  @@index([userId])
+}
+
+/// Phase 1: refunds are paid outside the app and recorded here by an admin.
+model Refund {
+  id           String   @id @default(cuid())
+  paymentId    String
+  amountPaise  Int
+  reason       String
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  payment    Payment @relation(fields: [paymentId], references: [id])
+  recordedBy User    @relation(fields: [recordedById], references: [id])
+}
+
+// ───────────────────────────── Configuration & ops ─────────────────────────────
+
+model Holiday {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  /// null = both slots closed
+  slot      Slot?
+  reason    String
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Admin-editable configuration. Each key's JSON shape is validated by
+/// `settingSchemas` in @way2meal/shared.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  /// null = broadcast to everyone
+  userId    String?
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}

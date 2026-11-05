@@ -1,0 +1,14 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@nestjs/core'
+  - '@swc/core'
+  - 'cpu-features'
+  - 'esbuild'
+  - 'prisma'
+  - 'protobufjs'
+  - 'ssh2'
